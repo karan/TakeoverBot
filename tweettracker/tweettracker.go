@@ -69,6 +69,7 @@ func Exists(idStr string) bool {
 	// Check if id exists in data
 	for _, dataLine := range Data {
 		if dataLine.IDStr == idStr {
+			log.Printf("Already replied to %s with tweet ID", idStr, dataLine.ReplyTweetId)
 			return true
 		}
 	}
