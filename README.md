@@ -5,5 +5,9 @@ Download fake local news sites, search for mentions of each on Twitter, and repl
 A dumb "database" of CSV files is saved for recall.
 
 ```
-go run main.go
+$ cp template.env .env
+
+# Add API keys
+
+$ go run main.go
 ```
