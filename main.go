@@ -148,6 +148,8 @@ func ParseData(filepath string) ([]*CSVLine, error) {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	tweettracker.Init()
 
 	err := godotenv.Load()
@@ -178,80 +180,83 @@ func main() {
 		log.Fatalf("Error getting Twitter tweet client: %+v\n", err)
 	}
 
-	if err := DownloadFile(LocalSitesFilePath, SitesCSVURL); err != nil {
-		log.Fatalf("Error downloading sites file: %+v\n", err)
-	}
+	for {
+		if err := DownloadFile(LocalSitesFilePath, SitesCSVURL); err != nil {
+			log.Fatalf("Error downloading sites file: %+v\n", err)
+		}
 
-	parsedData, err := ParseData(LocalSitesFilePath)
-	if err != nil {
-		log.Fatalf("Error parsing data: %+v", err)
-	}
-	log.Println("shuffling data")
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(parsedData), func(i, j int) { parsedData[i], parsedData[j] = parsedData[j], parsedData[i] })
-
-	for _, dataLine := range parsedData {
-		// Search for each domain with max number of count.
-		search, _, err := searchClient.Search.Tweets(&twitter.SearchTweetParams{
-			Query: fmt.Sprintf("%s", dataLine.domain),
-			Count: 100,
-		})
+		parsedData, err := ParseData(LocalSitesFilePath)
 		if err != nil {
-			log.Fatalf("Error while searching for %s: %+v", dataLine.domain, err)
+			log.Fatalf("Error parsing data: %+v", err)
 		}
+		log.Println("shuffling data")
+		rand.Seed(time.Now().UnixNano())
+		rand.Shuffle(len(parsedData), func(i, j int) { parsedData[i], parsedData[j] = parsedData[j], parsedData[i] })
 
-		// Reply to tweets
-		if len(search.Statuses) > 0 {
-			log.Printf("Found %d tweets for domain %s\n", len(search.Statuses), dataLine.domain)
-			log.Printf("Full record: %+v\n", dataLine)
-
-			for _, tweet := range search.Statuses {
-				// TODO: remove old tweets
-				// Remove retweets
-				if tweet.RetweetedStatus != nil {
-					log.Printf("Skipping https://twitter.com/%s/status/%s since it's a retweet", tweet.User.ScreenName, tweet.IDStr)
-					continue
-				}
-				// Check if id exists in data
-				log.Printf("Checking if already replied to https://twitter.com/%s/status/%s", tweet.User.ScreenName, tweet.IDStr)
-				if tweettracker.Exists(tweet.IDStr) {
-					continue
-				}
-
-				replyText := fmt.Sprintf(TweetMessageWithoutLocation, tweet.User.ScreenName)
-				if dataLine.state != "" {
-					replyText = fmt.Sprintf(TweetMessageWithLocation, tweet.User.ScreenName, dataLine.state)
-				}
-
-				replyTweet, _, err := tweetClient.Statuses.Update(replyText, &twitter.StatusUpdateParams{
-					InReplyToStatusID: tweet.ID,
-				})
-				if err != nil {
-					log.Println(err)
-				}
-				log.Printf("Successfully tweeted https://twitter.com/%s/status/%s", replyTweet.User.ScreenName, replyTweet.IDStr)
-
-				tweettracker.Add(&tweettracker.DataLine{
-					UserName:      tweet.User.ScreenName,
-					Domain:        dataLine.domain,
-					ReplyTweetId:  replyTweet.IDStr,
-					IDStr:         tweet.IDStr,
-					CreatedAt:     tweet.CreatedAt,
-					FavoriteCount: strconv.Itoa(tweet.FavoriteCount),
-					ReplyCount:    strconv.Itoa(tweet.ReplyCount),
-					RetweetCount:  strconv.Itoa(tweet.RetweetCount),
-					QuoteCount:    strconv.Itoa(tweet.QuoteCount),
-					FullText:      tweet.FullText,
-				})
-
-				log.Printf("Sleeping for %s...\n", TweetSleep.String())
-				time.Sleep(TweetSleep)
-				log.Printf("Moving on to a different domain...")
-				break
+		for _, dataLine := range parsedData {
+			// Search for each domain with max number of count.
+			search, _, err := searchClient.Search.Tweets(&twitter.SearchTweetParams{
+				Query: fmt.Sprintf("%s", dataLine.domain),
+				Count: 100,
+			})
+			if err != nil {
+				log.Fatalf("Error while searching for %s: %+v", dataLine.domain, err)
 			}
-		}
 
-		log.Printf("Sleeping for %s...\n", SearchSleep.String())
-		time.Sleep(SearchSleep)
+			// Reply to tweets
+			if len(search.Statuses) > 0 {
+				log.Printf("Found %d tweets for domain %s\n", len(search.Statuses), dataLine.domain)
+				log.Printf("Full record: %+v\n", dataLine)
+
+				for _, tweet := range search.Statuses {
+					// TODO: remove old tweets
+					// Remove retweets
+					if tweet.RetweetedStatus != nil {
+						log.Printf("Skipping https://twitter.com/%s/status/%s since it's a retweet", tweet.User.ScreenName, tweet.IDStr)
+						continue
+					}
+					// Check if id exists in data
+					log.Printf("Checking if already replied to https://twitter.com/%s/status/%s", tweet.User.ScreenName, tweet.IDStr)
+					if tweettracker.Exists(tweet.IDStr) {
+						continue
+					}
+
+					replyText := fmt.Sprintf(TweetMessageWithoutLocation, tweet.User.ScreenName)
+					if dataLine.state != "" {
+						replyText = fmt.Sprintf(TweetMessageWithLocation, tweet.User.ScreenName, dataLine.state)
+					}
+
+					replyTweet, _, err := tweetClient.Statuses.Update(replyText, &twitter.StatusUpdateParams{
+						InReplyToStatusID: tweet.ID,
+					})
+					if err != nil {
+						log.Printf("Got err tweeting, skipping: %+v", err)
+						continue
+					}
+					log.Printf("Successfully tweeted https://twitter.com/%s/status/%s", replyTweet.User.ScreenName, replyTweet.IDStr)
+
+					tweettracker.Add(&tweettracker.DataLine{
+						UserName:      tweet.User.ScreenName,
+						Domain:        dataLine.domain,
+						ReplyTweetId:  replyTweet.IDStr,
+						IDStr:         tweet.IDStr,
+						CreatedAt:     tweet.CreatedAt,
+						FavoriteCount: strconv.Itoa(tweet.FavoriteCount),
+						ReplyCount:    strconv.Itoa(tweet.ReplyCount),
+						RetweetCount:  strconv.Itoa(tweet.RetweetCount),
+						QuoteCount:    strconv.Itoa(tweet.QuoteCount),
+						FullText:      tweet.FullText,
+					})
+
+					log.Printf("Sleeping for %s...\n", TweetSleep.String())
+					time.Sleep(TweetSleep)
+					log.Printf("Moving on to a different domain...")
+					break
+				}
+			}
+
+			log.Printf("Sleeping for %s...\n", SearchSleep.String())
+			time.Sleep(SearchSleep)
+		}
 	}
 }
